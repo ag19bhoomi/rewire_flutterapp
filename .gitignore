@@ -1,0 +1,23 @@
+# Flutter and Dart
+.dart_tool/
+.packages
+build/
+pubspec.lock
+
+# Android
+.gradle/
+local.properties
+android/app/google-services.json
+
+# iOS and macOS
+ios/Flutter/.last_build_id
+macos/Flutter/.last_build_id
+
+# VSCode
+.vscode/
+
+# Logs
+*.log
+
+# Others
+.DS_Store
