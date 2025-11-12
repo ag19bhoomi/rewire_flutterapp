@@ -19,21 +19,28 @@ class LeaderboardScreen extends StatelessWidget {
           Expanded(
             child: subjectsData.isEmpty
                 ? const Center(
-              child: Text("No subjects available."),
+              child: Text(
+                "No subjects available.",
+                style: TextStyle(color: Colors.black54, fontSize: 16),
+              ),
             )
                 : ListView(
               padding: const EdgeInsets.all(16),
               children: subjectsData.entries.map((entry) {
                 final subject = entry.key;
                 final data = entry.value;
-                final score = data['score'] ?? 0;
-                final total = data['total'] ?? 1;
-                final percent = ((score / total) * 100).toInt();
+                final score = (data['score'] ?? 0).toDouble();
+                final total = (data['total'] ?? 0).toDouble();
+
+                // ✅ Avoid division by zero
+                final progress = total > 0 ? (score / total) : 0.0;
+                final percent = (progress * 100).toInt();
 
                 return Card(
                   margin: const EdgeInsets.symmetric(vertical: 8),
                   shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(16)),
+                    borderRadius: BorderRadius.circular(16),
+                  ),
                   elevation: 3,
                   child: ListTile(
                     leading: CircleAvatar(
@@ -49,16 +56,18 @@ class LeaderboardScreen extends StatelessWidget {
                       children: [
                         const SizedBox(height: 6),
                         LinearProgressIndicator(
-                          value: score / total,
+                          value: progress.clamp(0.0, 1.0),
                           backgroundColor: Colors.deepPurple[50],
                           color: Colors.deepPurple,
                         ),
                         const SizedBox(height: 4),
-                        Text("$percent%",
-                            style: const TextStyle(fontSize: 12)),
+                        Text(
+                          "$percent%",
+                          style: const TextStyle(fontSize: 12),
+                        ),
                       ],
                     ),
-                    trailing: Text("$score / $total"),
+                    trailing: Text("${score.toInt()} / ${total.toInt()}"),
                   ),
                 );
               }).toList(),
