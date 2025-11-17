@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../providers/study_data_provider.dart';
 import '../widgets/app_header.dart';
+import 'package:rewire_app/services/suggestion_service.dart';
 
 class LeaderboardScreen extends StatelessWidget {
   const LeaderboardScreen({super.key});
@@ -29,12 +30,20 @@ class LeaderboardScreen extends StatelessWidget {
               children: subjectsData.entries.map((entry) {
                 final subject = entry.key;
                 final data = entry.value;
+
+                // Convert to double first
                 final score = (data['score'] ?? 0).toDouble();
                 final total = (data['total'] ?? 0).toDouble();
 
-                // ✅ Avoid division by zero
+                // Avoid division by zero
                 final progress = total > 0 ? (score / total) : 0.0;
                 final percent = (progress * 100).toInt();
+
+                // Convert score to int for SuggestionService
+                final scoreInt = score.toInt();
+
+                // Get suggestion for this subject
+                final suggestion = SuggestionService.getSuggestion(scoreInt);
 
                 return Card(
                   margin: const EdgeInsets.symmetric(vertical: 8),
@@ -65,9 +74,18 @@ class LeaderboardScreen extends StatelessWidget {
                           "$percent%",
                           style: const TextStyle(fontSize: 12),
                         ),
+                        const SizedBox(height: 4),
+                        // Display suggestion
+                        Text(
+                          suggestion,
+                          style: TextStyle(
+                            fontSize: 14,
+                            color: Colors.grey[700],
+                          ),
+                        ),
                       ],
                     ),
-                    trailing: Text("${score.toInt()} / ${total.toInt()}"),
+                    trailing: Text("$scoreInt / ${total.toInt()}"),
                   ),
                 );
               }).toList(),
