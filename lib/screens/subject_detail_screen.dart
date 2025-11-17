@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:provider/provider.dart';
 import '../providers/study_data_provider.dart';
+import '../services/gemini_service.dart';
 
 class SubjectDetailScreen extends StatefulWidget {
   final String subjectName;
@@ -20,107 +21,130 @@ class SubjectDetailScreen extends StatefulWidget {
 class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
   List<Map<String, dynamic>>? _quiz;
   Map<int, int> _selectedAnswers = {};
+
   int? _score;
+  int? _total;  // ✅ NEW: store total quiz questions
   String? _summary;
+
+  bool _isSummaryLoading = false;
+  bool _isQuizLoading = false;
 
   @override
   void initState() {
     super.initState();
-    _loadData();
+    _loadLocalData();
   }
 
-  Future<void> _loadData() async {
+  Future<void> _loadLocalData() async {
     final prefs = await SharedPreferences.getInstance();
-    final savedScore = prefs.getInt('${widget.subjectName}_score');
-    final savedSummary = prefs.getString('${widget.subjectName}_summary');
-
     setState(() {
-      _score = savedScore;
-      _summary = savedSummary;
+      _score = prefs.getInt('${widget.subjectName}_score');
+      _total = prefs.getInt('${widget.subjectName}_total');  // ✅ load total
+      _summary = prefs.getString('${widget.subjectName}_summary');
     });
   }
 
-  /// 🧠 Generate short summary (around 30 words)
+  // -------------------------------------------------------------------------
+  // ✔ Summary
+  // -------------------------------------------------------------------------
   Future<void> _generateSummary() async {
-    const pythonSummary =
-        "Python is a high-level, interpreted language known for its readability, versatility, and vast libraries. It’s widely used for web development, data science, AI, automation, and scripting.";
+    if (widget.pdfPath == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Please upload a PDF first!")),
+      );
+      return;
+    }
 
-    setState(() => _summary = pythonSummary);
-
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString('${widget.subjectName}_summary', pythonSummary);
-  }
-
-  /// 📚 Generate Python-based quiz
-  void _generateQuiz() {
     setState(() {
-      _quiz = [
-        {
-          "question": "1️⃣ What is Python primarily used for?",
-          "options": [
-            "Web development",
-            "Machine learning",
-            "Data analysis",
-            "All of the above"
-          ],
-          "correctIndex": 3,
-        },
-        {
-          "question": "2️⃣ Who developed Python?",
-          "options": [
-            "James Gosling",
-            "Guido van Rossum",
-            "Dennis Ritchie",
-            "Bjarne Stroustrup"
-          ],
-          "correctIndex": 1,
-        },
-        {
-          "question": "3️⃣ Which of the following is a mutable data type in Python?",
-          "options": ["Tuple", "String", "List", "Set"],
-          "correctIndex": 2,
-        },
-        {
-          "question": "4️⃣ What symbol is used for comments in Python?",
-          "options": ["//", "/* */", "#", "--"],
-          "correctIndex": 2,
-        },
-        {
-          "question": "5️⃣ Which keyword is used to define a function in Python?",
-          "options": ["func", "define", "def", "lambda"],
-          "correctIndex": 2,
-        },
-      ];
-      _selectedAnswers.clear();
-      _score = null;
+      _isSummaryLoading = true;
+      _summary = null;
     });
+
+    try {
+      final generated = await GeminiService.generateSummary(widget.pdfPath!);
+
+      setState(() => _summary = generated);
+
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('${widget.subjectName}_summary', _summary!);
+    } catch (e) {
+      setState(() => _summary = "❌ Error: $e");
+    } finally {
+      setState(() => _isSummaryLoading = false);
+    }
   }
 
-  /// 🧮 Calculate and save score
+  // -------------------------------------------------------------------------
+  // ✔ Quiz
+  // -------------------------------------------------------------------------
+  Future<void> _generateQuiz() async {
+    if (widget.pdfPath == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Upload PDF first!")),
+      );
+      return;
+    }
+
+    setState(() {
+      _isQuizLoading = true;
+      _quiz = null;
+      _score = null;
+      _total = null;
+      _selectedAnswers.clear();
+    });
+
+    try {
+      final quizList = await GeminiService.generateQuiz(widget.pdfPath!);
+
+      if (quizList.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("❌ Failed to generate quiz.")),
+        );
+        return;
+      }
+
+      setState(() => _quiz = quizList);
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text("❌ Error generating quiz: $e")),
+      );
+    } finally {
+      setState(() => _isQuizLoading = false);
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // ✔ Submit Quiz
+  // -------------------------------------------------------------------------
   Future<void> _submitQuiz() async {
     if (_quiz == null) return;
 
     int score = 0;
+
     for (int i = 0; i < _quiz!.length; i++) {
-      if (_selectedAnswers[i] == _quiz![i]['correctIndex']) {
-        score++;
-      }
+      if (_selectedAnswers[i] == _quiz![i]['correctIndex']) score++;
     }
 
-    setState(() => _score = score);
+    setState(() {
+      _score = score;
+      _total = _quiz!.length;   // ⭐ IMPORTANT FIX: save total
+    });
 
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt('${widget.subjectName}_score', score);
+    await prefs.setInt('${widget.subjectName}_total', _total!);  // ⭐ SAVE TOTAL
 
-    // ✅ Update global StudyDataProvider for Leaderboard
     final provider = Provider.of<StudyDataProvider>(context, listen: false);
-    provider.updateQuizScore(widget.subjectName, score, _quiz!.length);
+    provider.updateQuizScore(widget.subjectName, score, _total!);
 
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text("✅ You scored $score / ${_quiz!.length}!")),
+      SnackBar(content: Text("✅ You scored $score / $_total!")),
     );
   }
 
+  // -------------------------------------------------------------------------
+  // UI
+  // -------------------------------------------------------------------------
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -133,39 +157,46 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
         padding: const EdgeInsets.all(16),
         child: Column(
           children: [
-            // ✅ Generate Summary button
+            // ---------------- Summary Button ----------------
             ElevatedButton.icon(
               icon: const Icon(Icons.summarize, color: Colors.white),
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.deepPurple,
                 shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12)),
+                  borderRadius: BorderRadius.circular(12),
+                ),
                 minimumSize: const Size(double.infinity, 50),
               ),
-              onPressed: _generateSummary,
+              onPressed: _isSummaryLoading ? null : _generateSummary,
               label: const Text("Generate Summary",
                   style: TextStyle(color: Colors.white, fontSize: 16)),
             ),
+
             const SizedBox(height: 10),
 
-            // ✅ Generate Quiz button
+            // ---------------- Quiz Button ----------------
             ElevatedButton.icon(
               icon: const Icon(Icons.quiz, color: Colors.white),
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.pinkAccent,
                 shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12)),
+                  borderRadius: BorderRadius.circular(12),
+                ),
                 minimumSize: const Size(double.infinity, 50),
               ),
-              onPressed: _generateQuiz,
+              onPressed: _isQuizLoading ? null : _generateQuiz,
               label: const Text("Generate Quiz",
                   style: TextStyle(color: Colors.white, fontSize: 16)),
             ),
 
             const SizedBox(height: 20),
 
-            // ✅ Show Summary
-            if (_summary != null)
+            // ---------------- Summary Loader ----------------
+            if (_isSummaryLoading)
+              const CircularProgressIndicator(color: Colors.deepPurple),
+
+            // ---------------- Summary UI ----------------
+            if (!_isSummaryLoading && _summary != null)
               Container(
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(
@@ -178,37 +209,43 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
                     const Text(
                       "📘 Summary:",
                       style: TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.deepPurple),
+                        fontSize: 18,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.deepPurple,
+                      ),
                     ),
                     const SizedBox(height: 8),
-                    Text(
-                      _summary!,
-                      style: const TextStyle(fontSize: 15, height: 1.4),
-                    ),
+                    Text(_summary!,
+                        style: const TextStyle(fontSize: 15, height: 1.4)),
                   ],
                 ),
               ),
 
             const SizedBox(height: 20),
 
-            // ✅ Show Quiz
+            // ---------------- Quiz Loader ----------------
+            if (_isQuizLoading)
+              const CircularProgressIndicator(color: Colors.pinkAccent),
+
+            // ---------------- Quiz UI ----------------
             if (_quiz != null)
               Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   const Text(
-                    "🧠 Python Quiz:",
+                    "🧠 Quiz:",
                     style: TextStyle(
-                        fontSize: 18,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.deepPurple),
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.deepPurple,
+                    ),
                   ),
                   const SizedBox(height: 10),
+
                   ..._quiz!.asMap().entries.map((entry) {
                     final index = entry.key;
                     final q = entry.value;
+
                     return Card(
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12),
@@ -220,11 +257,10 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(
-                              q['question'],
-                              style: const TextStyle(
-                                  fontWeight: FontWeight.w600, fontSize: 16),
-                            ),
+                            Text(q['question'],
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.w600,
+                                    fontSize: 16)),
                             const SizedBox(height: 8),
                             ...List.generate(q['options'].length, (optIndex) {
                               return RadioListTile<int>(
@@ -233,8 +269,7 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
                                 activeColor: Colors.deepPurple,
                                 title: Text(q['options'][optIndex]),
                                 onChanged: (val) {
-                                  setState(() =>
-                                  _selectedAnswers[index] = val ?? 0);
+                                  setState(() => _selectedAnswers[index] = val!);
                                 },
                               );
                             }),
@@ -244,14 +279,14 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
                     );
                   }),
 
-                  const SizedBox(height: 10),
                   ElevatedButton(
                     onPressed: _submitQuiz,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.deepPurple,
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10)),
                       minimumSize: const Size(double.infinity, 50),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
                     ),
                     child: const Text("Submit Quiz",
                         style: TextStyle(color: Colors.white, fontSize: 16)),
@@ -259,12 +294,12 @@ class _SubjectDetailScreenState extends State<SubjectDetailScreen> {
                 ],
               ),
 
-            // ✅ Show score
-            if (_score != null)
+            // ---------------- Score UI ----------------
+            if (_score != null && _total != null)
               Padding(
                 padding: const EdgeInsets.only(top: 20),
                 child: Text(
-                  "🏆 Your Last Score: $_score / 5",
+                  "🏆 Your Last Score: $_score / $_total",
                   style: const TextStyle(
                     fontSize: 18,
                     color: Colors.green,

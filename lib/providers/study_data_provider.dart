@@ -88,14 +88,24 @@ class StudyDataProvider extends ChangeNotifier {
 
   /// 🗑️ Delete a specific subject’s quiz data
   Future<void> deleteSubject(String subject) async {
+    final prefs = await SharedPreferences.getInstance();
+
+    // 1. Remove stored quiz score & total
     if (_subjectsData.containsKey(subject)) {
       _subjectsData.remove(subject);
-      await _saveScores();
-      notifyListeners();
+    }
 
-      if (kDebugMode) {
-        print("🗑️ Deleted subject from quiz data → $subject");
-      }
+    // 2. Remove local SharedPreferences score and summary (IMPORTANT FIX)
+    await prefs.remove('${subject}_score');
+    await prefs.remove('${subject}_summary');
+
+    // 3. Save updated map
+    await _saveScores();
+
+    notifyListeners();
+
+    if (kDebugMode) {
+      print("🗑️ Completely removed subject → $subject");
     }
   }
 

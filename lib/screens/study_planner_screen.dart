@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:rewire_app/services/pdf_service.dart';
@@ -22,40 +21,59 @@ class _StudyPlannerScreenState extends State<StudyPlannerScreen> {
   @override
   void initState() {
     super.initState();
-    _loadSubjects(); // ✅ Load data when app starts
+    _loadSubjects();
   }
 
-  /// 📂 Load saved subjects from SharedPreferences
+  // ---------------------------------------------------------------------
+  // Load saved subjects
+  // ---------------------------------------------------------------------
   Future<void> _loadSubjects() async {
     final prefs = await SharedPreferences.getInstance();
     final data = prefs.getString('subjects');
+
     if (data != null) {
-      setState(() {
-        _subjects = List<Map<String, dynamic>>.from(jsonDecode(data));
-      });
+      try {
+        setState(() {
+          _subjects = List<Map<String, dynamic>>.from(jsonDecode(data));
+        });
+      } catch (e) {
+        // Corrupted JSON fallback
+        setState(() => _subjects = []);
+      }
     }
   }
 
-  /// 💾 Save subjects to SharedPreferences
+  // ---------------------------------------------------------------------
+  // Save subjects
+  // ---------------------------------------------------------------------
   Future<void> _saveSubjects() async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString('subjects', jsonEncode(_subjects));
   }
 
-  /// ➕ Add new subject
+  // ---------------------------------------------------------------------
+  // Add subject
+  // ---------------------------------------------------------------------
   void _addSubject() async {
     final name = _subjectController.text.trim();
     if (name.isEmpty) return;
 
+    // Prevent duplicate subject names
+    if (_subjects.any((s) => s['name'] == name)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("❗ Subject already exists!")),
+      );
+      return;
+    }
+
+    // Reset score in provider
     final studyData = Provider.of<StudyDataProvider>(context, listen: false);
-    studyData.updateQuizScore(name, 0, 0); // sync with leaderboard
+    studyData.updateQuizScore(name, 0, 0);
 
     setState(() {
       _subjects.add({
         'name': name,
         'pdfPath': null,
-        'summary': null,
-        'quiz': null,
       });
       _subjectController.clear();
     });
@@ -63,32 +81,43 @@ class _StudyPlannerScreenState extends State<StudyPlannerScreen> {
     await _saveSubjects();
   }
 
-  /// 📄 Upload PDF for a subject
+  // ---------------------------------------------------------------------
+  // Upload PDF
+  // ---------------------------------------------------------------------
   Future<void> _uploadPdf(int index) async {
-    final File? file = await PdfService.pickPdf();
-    if (file == null) return;
-
-    setState(() => _subjects[index]['pdfPath'] = file.path);
-    await _saveSubjects();
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text("✅ PDF uploaded successfully")),
-    );
-  }
-
-  /// 🗑️ Delete a subject (Updated version)
-  Future<void> _deleteSubject(int index) async {
-    final subjectName = _subjects[index]['name'];
+    final String? pdfPath = await PdfService.pickPdf();
+    if (pdfPath == null) return;
 
     setState(() {
-      _subjects.removeAt(index);
+      _subjects[index]['pdfPath'] = pdfPath;
     });
 
     await _saveSubjects();
 
-    // ✅ Also remove from leaderboard data
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text("📄 PDF uploaded successfully")),
+    );
+  }
+
+  // ---------------------------------------------------------------------
+  // Delete subject + remove its saved summary/score
+  // ---------------------------------------------------------------------
+  Future<void> _deleteSubject(int index) async {
+    final subjectName = _subjects[index]['name'];
+
+    // Delete score & summary stored in SharedPreferences
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('${subjectName}_score');
+    await prefs.remove('${subjectName}_summary');
+
+    // Remove from provider also
     final provider = context.read<StudyDataProvider>();
     await provider.deleteSubject(subjectName);
+
+    // Remove from subject list UI
+    setState(() => _subjects.removeAt(index));
+
+    await _saveSubjects();
   }
 
   @override
@@ -105,7 +134,7 @@ class _StudyPlannerScreenState extends State<StudyPlannerScreen> {
         children: [
           const AppHeader(title: "Study Planner"),
 
-          // Input Field + Add Button
+          // Add subject input
           Padding(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
             child: Row(
@@ -133,7 +162,7 @@ class _StudyPlannerScreenState extends State<StudyPlannerScreen> {
             ),
           ),
 
-          // Subject List
+          // -------------------- Subject List --------------------
           Expanded(
             child: _subjects.isEmpty
                 ? const Center(
@@ -159,7 +188,7 @@ class _StudyPlannerScreenState extends State<StudyPlannerScreen> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        // 🏷️ Subject Name (Clickable)
+                        // ---------------- Subject Name ----------------
                         GestureDetector(
                           onTap: () {
                             Navigator.push(
@@ -183,9 +212,10 @@ class _StudyPlannerScreenState extends State<StudyPlannerScreen> {
                             ),
                           ),
                         ),
+
                         const SizedBox(height: 8),
 
-                        // 📂 Upload PDF Button
+                        // ---------------- Upload PDF ----------------
                         GestureDetector(
                           onTap: () => _uploadPdf(index),
                           child: Container(
@@ -212,9 +242,10 @@ class _StudyPlannerScreenState extends State<StudyPlannerScreen> {
                             ),
                           ),
                         ),
+
                         const SizedBox(height: 10),
 
-                        // 🗑️ Delete Button
+                        // ---------------- Delete Button ----------------
                         Align(
                           alignment: Alignment.centerRight,
                           child: IconButton(

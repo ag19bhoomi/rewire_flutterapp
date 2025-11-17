@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:provider/provider.dart';
 import 'package:firebase_auth/firebase_auth.dart';
@@ -10,10 +11,16 @@ import 'screens/main_screen.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // ✅ Load environment variables first (Gemini API Key)
+  await dotenv.load(fileName: ".env");
+
+  // ✅ Initialize Firebase
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
 
+  // ✅ Then run the app
   runApp(
     MultiProvider(
       providers: [
@@ -36,23 +43,24 @@ class MyApp extends StatelessWidget {
         primarySwatch: Colors.deepPurple,
         scaffoldBackgroundColor: const Color(0xFFF3E5F5),
       ),
-      // 🔥 This stream automatically updates when user logs in or logs out
+
+      // 🔥 Firebase Auth Login State Listener
       home: StreamBuilder<User?>(
         stream: FirebaseAuth.instance.authStateChanges(),
         builder: (context, snapshot) {
+          // ⏳ Show loading screen while checking auth status
           if (snapshot.connectionState == ConnectionState.waiting) {
-            // Show splash/loading while Firebase checks auth state
             return const Scaffold(
               body: Center(child: CircularProgressIndicator()),
             );
           }
 
-          // ✅ If user is logged in → go to main screen
+          // ✅ If logged in → Main Screen
           if (snapshot.hasData) {
             return const MainScreen();
           }
 
-          // 🚪 Otherwise → go to sign in screen
+          // 🚪 If not logged in → Auth Screen
           return const AuthScreen();
         },
       ),
